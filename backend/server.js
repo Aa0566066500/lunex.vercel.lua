@@ -1,184 +1,112 @@
-"use strict";
-
 const express = require("express");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const admin = require("firebase-admin");
 const { Pool } = require("pg");
 const crypto = require("crypto");
+const path = require("path");
 
 const app = express();
-app.disable("x-powered-by");
+
 app.set("trust proxy", 1);
 
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: false
+  })
+);
+
 app.use(express.json({ limit: "256kb" }));
 
-app.use("/api", rateLimit({
-  windowMs: 60 * 1000,
-  limit: 100,
-  standardHeaders: "draft-8",
-  legacyHeaders: false
-}));
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: 60_000,
+    limit: 90,
+    standardHeaders: true,
+    legacyHeaders: false
+  })
+);
 
-let firebaseReady = false;
-let pool = null;
-
-function initializeFirebase() {
-  if (firebaseReady) return;
-
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-
-  if (!serviceAccountJson) {
-    throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON is not configured.");
-  }
-
-  const serviceAccount = JSON.parse(serviceAccountJson);
-
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-  }
-
-  firebaseReady = true;
+if (!process.env.DATABASE_URL) {
+  throw new Error("Missing DATABASE_URL");
 }
 
-function getPool() {
-  if (pool) return pool;
-
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is not configured.");
-  }
-
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.PGSSL === "disable"
-      ? false
-      : { rejectUnauthorized: true },
-    max: 5,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000
-  });
-
-  pool.on("error", (error) => {
-    console.error("Unexpected database pool error:", error.message);
-  });
-
-  return pool;
+if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  throw new Error("Missing FIREBASE_SERVICE_ACCOUNT_JSON");
 }
 
-function isAdminEmail(email) {
-  const allowedEmails = (process.env.ADMIN_EMAILS || "")
+const serviceAccount = JSON.parse(
+  process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+);
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl:
+    process.env.NODE_ENV === "production"
+      ? { rejectUnauthorized: false }
+      : false
+});
+
+const adminEmails = new Set(
+  (process.env.ADMIN_EMAILS || "")
     .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean)
+);
 
-  return allowedEmails.includes(String(email || "").toLowerCase());
+function createPublicId() {
+  return crypto.randomBytes(18).toString("base64url");
 }
 
 async function authenticate(req, res, next) {
   try {
-    const authorization = req.get("authorization") || "";
-    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    const header = req.headers.authorization || "";
 
-    if (!match) {
+    if (!header.startsWith("Bearer ")) {
       return res.status(401).json({
-        error: "يلزم تسجيل الدخول."
+        error: "سجّل الدخول أولًا."
       });
     }
 
-    initializeFirebase();
+    const token = header.slice(7);
 
-    const decoded = await admin.auth().verifyIdToken(match[1]);
-
-    if (!decoded.uid) {
-      return res.status(401).json({
-        error: "تعذّر التحقق من الحساب."
-      });
-    }
+    const decoded = await admin.auth().verifyIdToken(token, true);
 
     req.user = {
-      id: decoded.uid,
-      email: decoded.email || "",
-      name: decoded.name || ""
+      uid: decoded.uid,
+      email: (decoded.email || "").toLowerCase()
     };
 
-    req.user.isAdmin = isAdminEmail(req.user.email);
+    req.isAdmin =
+      Boolean(req.user.email) &&
+      adminEmails.has(req.user.email);
 
-    next();
-  } catch (error) {
-    console.error("Authentication failed:", error.message);
-
+    return next();
+  } catch {
     return res.status(401).json({
-      error: "جلسة تسجيل الدخول غير صالحة."
+      error: "جلسة الدخول غير صالحة. سجّل الدخول مجددًا."
     });
   }
 }
 
-function requireDatabase(req, res, next) {
-  try {
-    req.db = getPool();
-    next();
-  } catch (error) {
-    console.error("Database configuration error:", error.message);
-
-    res.status(503).json({
-      error: "الخادم غير جاهز؛ تحقق من إعداد قاعدة البيانات."
+function requireAdmin(req, res, next) {
+  if (!req.isAdmin) {
+    return res.status(403).json({
+      error: "هذه الميزة مخصصة للمالك فقط."
     });
   }
+
+  return next();
 }
 
-function validateScript(req, res, next) {
-  const { title, slug, source_code } = req.body || {};
-
-  if (typeof title !== "string" || !title.trim() || title.length > 80) {
-    return res.status(400).json({
-      error: "اسم السورس مطلوب، والحد الأقصى 80 حرفًا."
-    });
-  }
-
-  if (
-    typeof slug !== "string" ||
-    !/^[A-Za-z0-9_-]{1,50}$/.test(slug)
-  ) {
-    return res.status(400).json({
-      error: "اسم الرابط غير صالح."
-    });
-  }
-
-  if (
-    typeof source_code !== "string" ||
-    !source_code.trim() ||
-    Buffer.byteLength(source_code, "utf8") > 200000
-  ) {
-    return res.status(400).json({
-      error: "الكود مطلوب، وحجمه يجب ألا يتجاوز 200 كيلوبايت."
-    });
-  }
-
-  req.validatedScript = {
-    title: title.trim(),
-    slug,
-    source_code
-  };
-
-  next();
-}
-
-async function recordEvent(db, actorId, eventType, scriptId = null) {
-  try {
-    await db.query(
-      `INSERT INTO audit_events (actor_id, event_type, script_id)
-       VALUES ($1, $2, $3)`,
-      [actorId, eventType, scriptId]
-    );
-  } catch (error) {
-    console.error("Audit event could not be saved:", error.message);
-  }
-}
-
-app.get("/api/health", (req, res) => {
+app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     service: "Lunex Scripts"
@@ -186,325 +114,322 @@ app.get("/api/health", (req, res) => {
 });
 
 app.get("/api/me", authenticate, (req, res) => {
-  res.set("Cache-Control", "no-store");
-
   res.json({
-    id: req.user.id,
+    uid: req.user.uid,
     email: req.user.email,
-    name: req.user.name,
-    isAdmin: req.user.isAdmin
+    isAdmin: req.isAdmin
   });
 });
 
-app.get("/api/scripts", authenticate, requireDatabase, async (req, res) => {
-  res.set("Cache-Control", "no-store");
-
+app.get("/api/scripts", authenticate, async (req, res) => {
   try {
-    const query = req.user.isAdmin
-      ? `SELECT id, owner_id, title, slug, visibility, created_at, updated_at
-         FROM scripts
-         ORDER BY updated_at DESC
-         LIMIT 500`
-      : `SELECT id, owner_id, title, slug, visibility, created_at, updated_at
-         FROM scripts
-         WHERE owner_id = $1
-         ORDER BY updated_at DESC
-         LIMIT 500`;
-
-    const result = req.user.isAdmin
-      ? await req.db.query(query)
-      : await req.db.query(query, [req.user.id]);
+    const result = req.isAdmin
+      ? await pool.query(
+          `SELECT public_id, owner_uid, title, created_at,
+                  updated_at, enabled
+           FROM scripts
+           ORDER BY created_at DESC
+           LIMIT 500`
+        )
+      : await pool.query(
+          `SELECT public_id, title, created_at, updated_at, enabled
+           FROM scripts
+           WHERE owner_uid = $1
+           ORDER BY created_at DESC`,
+          [req.user.uid]
+        );
 
     res.json({
       scripts: result.rows
     });
   } catch (error) {
-    console.error("List scripts error:", error.message);
+    console.error("List scripts failed:", error.message);
 
     res.status(500).json({
-      error: "تعذّر تحميل السورسات."
+      error: "تعذر تحميل السورسات."
     });
   }
 });
 
-app.post(
-  "/api/scripts",
-  authenticate,
-  requireDatabase,
-  validateScript,
-  async (req, res) => {
-    const { title, slug, source_code } = req.validatedScript;
+app.post("/api/scripts", authenticate, async (req, res) => {
+  const title = String(req.body.title || "").trim().slice(0, 80);
+  const source = String(req.body.source || "");
 
-    try {
-      await req.db.query(
-        `INSERT INTO users (id, email, display_name)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (id)
-         DO UPDATE SET
-           email = EXCLUDED.email,
-           display_name = EXCLUDED.display_name`,
-        [
-          req.user.id,
-          req.user.email || `${req.user.id}@no-email.invalid`,
-          req.user.name || "User"
-        ]
-      );
+  if (!title) {
+    return res.status(400).json({
+      error: "اكتب اسم السورس."
+    });
+  }
 
-      const result = await req.db.query(
-        `INSERT INTO scripts
-           (owner_id, title, slug, source_code, visibility)
-         VALUES ($1, $2, $3, $4, 'private')
-         RETURNING id, title, slug, visibility, created_at, updated_at`,
-        [req.user.id, title, slug, source_code]
-      );
+  if (!source.trim()) {
+    return res.status(400).json({
+      error: "الصق كود Lua أولًا."
+    });
+  }
 
-      await recordEvent(
-        req.db,
-        req.user.id,
-        "script_created",
-        result.rows[0].id
-      );
+  if (source.length > 200_000) {
+    return res.status(413).json({
+      error: "الحد الأقصى للسورس 200 ألف حرف."
+    });
+  }
 
-      res.status(201).json({
-        script: result.rows[0]
-      });
-    } catch (error) {
-      if (error.code === "23505") {
-        return res.status(409).json({
-          error: "اسم الرابط مستخدم بالفعل. اختر اسمًا آخر."
-        });
-      }
+  const client = await pool.connect();
 
-      console.error("Create script error:", error.message);
+  try {
+    await client.query("BEGIN");
 
-      res.status(500).json({
-        error: "تعذّر إنشاء السورس."
+    const publicId = createPublicId();
+
+    await client.query(
+      `INSERT INTO scripts (public_id, owner_uid, title, source)
+       VALUES ($1, $2, $3, $4)`,
+      [publicId, req.user.uid, title, source]
+    );
+
+    await client.query(
+      `INSERT INTO access_events (script_id, actor_uid, event_type)
+       SELECT id, $1, 'created'
+       FROM scripts
+       WHERE public_id = $2`,
+      [req.user.uid, publicId]
+    );
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      publicId,
+      title
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    console.error("Create script failed:", error.message);
+
+    res.status(500).json({
+      error: "تعذر حفظ السورس."
+    });
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/scripts/:id", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, public_id, owner_uid, title, source,
+              created_at, enabled
+       FROM scripts
+       WHERE public_id = $1`,
+      [req.params.id]
+    );
+
+    const script = result.rows[0];
+
+    if (!script) {
+      return res.status(404).json({
+        error: "السورس غير موجود."
       });
     }
-  }
-);
 
-app.get(
-  "/api/scripts/:id",
-  authenticate,
-  requireDatabase,
-  async (req, res) => {
-    res.set("Cache-Control", "no-store");
-
-    try {
-      const result = await req.db.query(
-        `SELECT id, owner_id, title, slug, source_code,
-                visibility, created_at, updated_at
-         FROM scripts
-         WHERE id = $1
-         LIMIT 1`,
-        [req.params.id]
+    if (!req.isAdmin && script.owner_uid !== req.user.uid) {
+      await pool.query(
+        `INSERT INTO access_events (script_id, actor_uid, event_type)
+         VALUES ($1, $2, 'denied')`,
+        [script.id, req.user.uid]
       );
 
-      const script = result.rows[0];
-
-      if (
-        !script ||
-        (!req.user.isAdmin && script.owner_id !== req.user.id)
-      ) {
-        return res.status(403).json({
-          error: "ليس لديك صلاحية للوصول لهذا السورس."
-        });
-      }
-
-      await recordEvent(
-        req.db,
-        req.user.id,
-        "script_accessed",
-        script.id
-      );
-
-      res.json(script);
-    } catch (error) {
-      if (error.code === "22P02") {
-        return res.status(404).json({
-          error: "السورس غير موجود."
-        });
-      }
-
-      console.error("Get script error:", error.message);
-
-      res.status(500).json({
-        error: "تعذّر تحميل السورس."
+      return res.status(404).json({
+        error: "السورس غير موجود."
       });
     }
+
+    res.json({
+      script
+    });
+  } catch (error) {
+    console.error("Get script failed:", error.message);
+
+    res.status(500).json({
+      error: "تعذر فتح السورس."
+    });
   }
-);
+});
 
-app.put(
-  "/api/scripts/:id",
-  authenticate,
-  requireDatabase,
-  validateScript,
-  async (req, res) => {
-    const { title, slug, source_code } = req.validatedScript;
+app.patch("/api/scripts/:id", authenticate, async (req, res) => {
+  const title =
+    typeof req.body.title === "string"
+      ? req.body.title.trim().slice(0, 80)
+      : null;
 
-    try {
-      const result = await req.db.query(
-        `UPDATE scripts
-         SET title = $1,
-             slug = $2,
-             source_code = $3,
-             updated_at = NOW()
-         WHERE id = $4
-           AND ($5::boolean OR owner_id = $6)
-         RETURNING id, owner_id, title, slug, visibility,
-                   created_at, updated_at`,
-        [
-          title,
-          slug,
-          source_code,
-          req.params.id,
-          req.user.isAdmin,
-          req.user.id
-        ]
-      );
+  const source =
+    typeof req.body.source === "string"
+      ? req.body.source
+      : null;
 
-      if (!result.rows.length) {
-        return res.status(403).json({
-          error: "ليس لديك صلاحية لتعديل هذا السورس."
-        });
-      }
+  const enabled =
+    typeof req.body.enabled === "boolean"
+      ? req.body.enabled
+      : null;
 
-      await recordEvent(
-        req.db,
-        req.user.id,
-        "script_updated",
-        result.rows[0].id
-      );
+  if (
+    title === null &&
+    source === null &&
+    enabled === null
+  ) {
+    return res.status(400).json({
+      error: "لا توجد تغييرات."
+    });
+  }
 
-      res.json({
-        script: result.rows[0]
-      });
-    } catch (error) {
-      if (error.code === "23505") {
-        return res.status(409).json({
-          error: "اسم الرابط مستخدم بالفعل."
-        });
-      }
+  if (title !== null && !title) {
+    return res.status(400).json({
+      error: "اسم السورس لا يمكن أن يكون فارغًا."
+    });
+  }
 
-      if (error.code === "22P02") {
-        return res.status(404).json({
-          error: "السورس غير موجود."
-        });
-      }
+  if (
+    source !== null &&
+    (!source.trim() || source.length > 200_000)
+  ) {
+    return res.status(400).json({
+      error: "السورس فارغ أو تجاوز الحد المسموح."
+    });
+  }
 
-      console.error("Update script error:", error.message);
+  try {
+    const existing = await pool.query(
+      `SELECT id, owner_uid
+       FROM scripts
+       WHERE public_id = $1`,
+      [req.params.id]
+    );
 
-      res.status(500).json({
-        error: "تعذّر تعديل السورس."
+    const script = existing.rows[0];
+
+    if (!script) {
+      return res.status(404).json({
+        error: "السورس غير موجود."
       });
     }
-  }
-);
 
-app.delete(
-  "/api/scripts/:id",
-  authenticate,
-  requireDatabase,
-  async (req, res) => {
-    try {
-      const result = await req.db.query(
-        `DELETE FROM scripts
-         WHERE id = $1
-           AND ($2::boolean OR owner_id = $3)
-         RETURNING id`,
-        [req.params.id, req.user.isAdmin, req.user.id]
-      );
-
-      if (!result.rows.length) {
-        return res.status(403).json({
-          error: "ليس لديك صلاحية لحذف هذا السورس."
-        });
-      }
-
-      await recordEvent(
-        req.db,
-        req.user.id,
-        "script_deleted",
-        result.rows[0].id
-      );
-
-      res.json({
-        success: true
-      });
-    } catch (error) {
-      if (error.code === "22P02") {
-        return res.status(404).json({
-          error: "السورس غير موجود."
-        });
-      }
-
-      console.error("Delete script error:", error.message);
-
-      res.status(500).json({
-        error: "تعذّر حذف السورس."
+    if (!req.isAdmin && script.owner_uid !== req.user.uid) {
+      return res.status(404).json({
+        error: "السورس غير موجود."
       });
     }
+
+    const fields = [];
+    const values = [];
+    let index = 1;
+
+    if (title !== null) {
+      fields.push(`title = $${index++}`);
+      values.push(title);
+    }
+
+    if (source !== null) {
+      fields.push(`source = $${index++}`);
+      values.push(source);
+    }
+
+    if (enabled !== null) {
+      fields.push(`enabled = $${index++}`);
+      values.push(enabled);
+    }
+
+    fields.push("updated_at = NOW()");
+    values.push(req.params.id);
+
+    await pool.query(
+      `UPDATE scripts
+       SET ${fields.join(", ")}
+       WHERE public_id = $${index}`,
+      values
+    );
+
+    res.json({
+      ok: true
+    });
+  } catch (error) {
+    console.error("Update script failed:", error.message);
+
+    res.status(500).json({
+      error: "تعذر تحديث السورس."
+    });
   }
-);
+});
+
+app.delete("/api/scripts/:id", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM scripts
+       WHERE public_id = $1
+       AND ($2::boolean OR owner_uid = $3)
+       RETURNING id`,
+      [req.params.id, req.isAdmin, req.user.uid]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({
+        error: "السورس غير موجود."
+      });
+    }
+
+    res.json({
+      ok: true
+    });
+  } catch (error) {
+    console.error("Delete script failed:", error.message);
+
+    res.status(500).json({
+      error: "تعذر حذف السورس."
+    });
+  }
+});
 
 app.get(
   "/api/admin/events",
   authenticate,
-  requireDatabase,
-  async (req, res) => {
-    if (!req.user.isAdmin) {
-      return res.status(403).json({
-        error: "هذه الصفحة مخصصة للإدارة."
-      });
-    }
-
+  requireAdmin,
+  async (_req, res) => {
     try {
-      const result = await req.db.query(
-        `SELECT id, actor_id, event_type, script_id, created_at
-         FROM audit_events
-         ORDER BY created_at DESC
-         LIMIT 200`
+      const result = await pool.query(
+        `SELECT e.event_type, e.actor_uid, e.created_at,
+                s.public_id, s.title, s.owner_uid
+         FROM access_events e
+         LEFT JOIN scripts s ON s.id = e.script_id
+         ORDER BY e.created_at DESC
+         LIMIT 300`
       );
 
-      res.set("Cache-Control", "no-store");
       res.json({
         events: result.rows
       });
     } catch (error) {
-      console.error("Admin events error:", error.message);
+      console.error("Load events failed:", error.message);
 
       res.status(500).json({
-        error: "تعذّر تحميل سجل الأحداث."
+        error: "تعذر تحميل سجل الإدارة."
       });
     }
   }
 );
 
-app.use("/api", (req, res) => {
-  res.status(404).json({
-    error: "المسار المطلوب غير موجود."
-  });
-});
+app.use(
+  express.static(path.join(__dirname, "../frontend"))
+);
 
-app.use((error, req, res, next) => {
-  console.error("Unhandled server error:", error.message);
-
-  if (res.headersSent) {
-    return next(error);
-  }
-
-  res.status(500).json({
-    error: "حدث خطأ غير متوقع."
-  });
+app.get("*", (_req, res) => {
+  res.sendFile(
+    path.join(__dirname, "../frontend/index.html")
+  );
 });
 
 if (require.main === module) {
   const port = Number(process.env.PORT || 3000);
 
   app.listen(port, "0.0.0.0", () => {
-    console.log(`Lunex Scripts server listening on port ${port}`);
+    console.log(`Lunex Scripts listening on ${port}`);
   });
 }
 
