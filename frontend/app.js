@@ -1,5 +1,6 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+
 import {
     getAuth,
     GoogleAuthProvider,
@@ -9,10 +10,10 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 
 const firebaseConfig = {
-    apiKey: "REPLACE_WITH_FIREBASE_API_KEY",
-    authDomain: "REPLACE_WITH_FIREBASE_AUTH_DOMAIN",
-    projectId: "REPLACE_WITH_FIREBASE_PROJECT_ID",
-    appId: "REPLACE_WITH_FIREBASE_APP_ID"
+    apiKey: "AIzaSyDBKv4SEWioEMjIjawuQLs1nKxqYolTsvw",
+    authDomain: "lunex-a085c.firebaseapp.com",
+    projectId: "lunex-a085c",
+    appId: "1:614659495740:web:5f3c762a7c9ee362807039"
 };
 
 const $ = id => document.getElementById(id);
@@ -27,35 +28,45 @@ const sourceInput = $("script-source");
 const cancelButton = $("cancel-script-button");
 const scriptsList = $("scripts-list");
 const message = $("message");
+const yearElement = $("current-year");
 
-$("current-year").textContent = new Date().getFullYear();
+if (yearElement) {
+    yearElement.textContent = new Date().getFullYear();
+}
 
 let auth = null;
 let currentUser = null;
 let scripts = [];
 let editingId = null;
 let busy = false;
-
-const configured = Object.values(firebaseConfig).every(
-    value => value && !value.startsWith("REPLACE_WITH_")
-);
+let authCheckVersion = 0;
 
 function showMessage(text, isError = false) {
+    if (!message) return;
+
     message.textContent = text;
     message.style.color = isError ? "#ff7b89" : "";
 }
 
 function setBusy(value) {
     busy = value;
-    loginButton.disabled = value;
-    logoutButton.disabled = value;
-    newScriptButton.disabled = value;
+
+    if (loginButton) loginButton.disabled = value;
+    if (logoutButton) logoutButton.disabled = value;
+    if (newScriptButton) newScriptButton.disabled = value;
+    if (cancelButton) cancelButton.disabled = value;
+
+    const submitButton = scriptForm?.querySelector(
+        'button[type="submit"], input[type="submit"]'
+    );
+
+    if (submitButton) submitButton.disabled = value;
 }
 
 async function api(url, options = {}) {
     const headers = { ...(options.headers || {}) };
 
-    if (options.body) {
+    if (options.body !== undefined) {
         headers["Content-Type"] = "application/json";
     }
 
@@ -72,38 +83,59 @@ async function api(url, options = {}) {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-        throw new Error(data.error || `حدث خطأ (${response.status})`);
+        throw new Error(
+            data.error ||
+            data.message ||
+            `حدث خطأ في الاتصال (${response.status})`
+        );
     }
 
     return data;
 }
 
-function showLoggedOut() {
-    userStatus.textContent = "غير مسجل الدخول";
-    loginButton.hidden = false;
-    logoutButton.hidden = true;
-    newScriptButton.hidden = true;
-    scriptForm.hidden = true;
-    scriptsList.replaceChildren();
-}
-
-function showLoggedIn(user) {
-    userStatus.textContent = user.displayName || user.email || "تم تسجيل الدخول";
-    loginButton.hidden = true;
-    logoutButton.hidden = false;
-    newScriptButton.hidden = false;
-}
-
 function resetForm() {
     editingId = null;
-    scriptForm.reset();
-    scriptForm.hidden = true;
-    titleInput.disabled = false;
-    sourceInput.disabled = false;
+
+    if (scriptForm) {
+        scriptForm.reset();
+        scriptForm.hidden = true;
+    }
+
+    if (titleInput) titleInput.disabled = false;
+    if (sourceInput) sourceInput.disabled = false;
+
     showMessage("");
 }
 
+function showLoggedOut() {
+    if (userStatus) {
+        userStatus.textContent = "غير مسجل الدخول";
+    }
+
+    if (loginButton) loginButton.hidden = false;
+    if (logoutButton) logoutButton.hidden = true;
+    if (newScriptButton) newScriptButton.hidden = true;
+
+    resetForm();
+    scripts = [];
+
+    if (scriptsList) scriptsList.replaceChildren();
+}
+
+function showLoggedIn(user) {
+    if (userStatus) {
+        userStatus.textContent =
+            user.displayName || user.email || "تم تسجيل الدخول";
+    }
+
+    if (loginButton) loginButton.hidden = true;
+    if (logoutButton) logoutButton.hidden = false;
+    if (newScriptButton) newScriptButton.hidden = false;
+}
+
 function renderScripts() {
+    if (!scriptsList) return;
+
     scriptsList.replaceChildren();
 
     if (scripts.length === 0) {
@@ -119,17 +151,25 @@ function renderScripts() {
         card.className = "script-card";
 
         const heading = document.createElement("h3");
-        heading.textContent = script.title;
+        heading.textContent = script.title || "بدون اسم";
 
         const date = document.createElement("p");
-        date.textContent = script.updated_at
-            ? `آخر تحديث: ${new Date(script.updated_at).toLocaleString("ar-SA")}`
-            : "";
+
+        if (script.updated_at) {
+            const parsedDate = new Date(script.updated_at);
+
+            date.textContent = Number.isNaN(parsedDate.getTime())
+                ? ""
+                : `آخر تحديث: ${parsedDate.toLocaleString("ar-SA")}`;
+        }
 
         const editButton = document.createElement("button");
         editButton.type = "button";
         editButton.textContent = "عرض / تعديل";
-        editButton.addEventListener("click", () => openEditor(script));
+
+        editButton.addEventListener("click", () => {
+            openEditor(script);
+        });
 
         card.append(heading, date, editButton);
         scriptsList.append(card);
@@ -141,118 +181,172 @@ async function loadScripts() {
 
     try {
         const data = await api("/api/scripts");
-        scripts = Array.isArray(data) ? data : data.scripts || [];
+
+        scripts = Array.isArray(data)
+            ? data
+            : Array.isArray(data.scripts)
+                ? data.scripts
+                : [];
+
         renderScripts();
         showMessage("");
     } catch (error) {
-        showMessage(error.message, true);
+        showMessage(error.message || "تعذر تحميل السورسات.", true);
     }
 }
 
-function openEditor(script = null) {
-    editingId = script?.public_id || null;
-
-    titleInput.value = script?.title || "";
-    sourceInput.value = script?.source || "";
-
-    scriptForm.hidden = false;
-    showMessage("");
-
-    titleInput.focus();
-}
-
-loginButton.addEventListener("click", async () => {
-    if (!auth || busy) return;
-
-    setBusy(true);
-
-    try {
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-    } catch (error) {
-        showMessage(`تعذر تسجيل الدخول: ${error.message}`, true);
-    } finally {
-        setBusy(false);
-    }
-});
-
-logoutButton.addEventListener("click", async () => {
-    if (!auth || busy) return;
-
-    setBusy(true);
-
-    try {
-        await signOut(auth);
-        currentUser = null;
-        scripts = [];
-        showLoggedOut();
-        showMessage("تم تسجيل الخروج.");
-    } catch (error) {
-        showMessage(error.message, true);
-    } finally {
-        setBusy(false);
-    }
-});
-
-newScriptButton.addEventListener("click", () => openEditor());
-
-cancelButton.addEventListener("click", resetForm);
-
-scriptForm.addEventListener("submit", async event => {
-    event.preventDefault();
-
+async function openEditor(script = null) {
     if (busy) return;
 
-    const title = titleInput.value.trim();
-    const source = sourceInput.value;
-
-    if (!title || !source.trim()) {
-        showMessage("اكتب اسم السورس والكود أولًا.", true);
-        return;
-    }
-
-    setBusy(true);
-    showMessage("جاري حفظ السورس...");
-
     try {
-        if (editingId) {
-            await api(`/api/scripts/${encodeURIComponent(editingId)}`, {
-                method: "PATCH",
-                body: JSON.stringify({ title, source })
-            });
-        } else {
-            await api("/api/scripts", {
-                method: "POST",
-                body: JSON.stringify({ title, source })
-            });
+        showMessage("");
+
+        let selectedScript = null;
+
+        if (script?.public_id) {
+            showMessage("جاري تحميل السورس...");
+
+            const data = await api(
+                `/api/scripts/${encodeURIComponent(script.public_id)}`
+            );
+
+            if (!data?.script) {
+                throw new Error("تعذر الحصول على بيانات السورس من السيرفر.");
+            }
+
+            selectedScript = data.script;
+        } else if (script) {
+            selectedScript = script;
         }
 
-        resetForm();
-        await loadScripts();
-        showMessage("تم حفظ السورس بنجاح.");
+        editingId = selectedScript?.public_id || null;
+
+        titleInput.value = selectedScript?.title || "";
+        sourceInput.value = selectedScript?.source || "";
+
+        scriptForm.hidden = false;
+        showMessage("");
+        titleInput.focus();
     } catch (error) {
-        showMessage(error.message, true);
-    } finally {
-        setBusy(false);
+        showMessage(error.message || "تعذر فتح السورس.", true);
     }
-});
+}
+
+if (loginButton) {
+    loginButton.addEventListener("click", async () => {
+        if (!auth || busy) return;
+
+        setBusy(true);
+
+        try {
+            const provider = new GoogleAuthProvider();
+            await signInWithPopup(auth, provider);
+        } catch (error) {
+            showMessage(`تعذر تسجيل الدخول: ${error.message}`, true);
+        } finally {
+            setBusy(false);
+        }
+    });
+}
+
+if (logoutButton) {
+    logoutButton.addEventListener("click", async () => {
+        if (!auth || busy) return;
+
+        setBusy(true);
+
+        try {
+            await signOut(auth);
+            currentUser = null;
+            scripts = [];
+            showLoggedOut();
+            showMessage("تم تسجيل الخروج.");
+        } catch (error) {
+            showMessage(error.message, true);
+        } finally {
+            setBusy(false);
+        }
+    });
+}
+
+if (newScriptButton) {
+    newScriptButton.addEventListener("click", () => {
+        if (!busy) openEditor();
+    });
+}
+
+if (cancelButton) {
+    cancelButton.addEventListener("click", () => {
+        if (!busy) resetForm();
+    });
+}
+
+if (scriptForm) {
+    scriptForm.addEventListener("submit", async event => {
+        event.preventDefault();
+
+        if (busy) return;
+
+        if (!currentUser) {
+            showMessage("سجّل الدخول أولًا.", true);
+            return;
+        }
+
+        const title = titleInput.value.trim();
+        const source = sourceInput.value;
+
+        if (!title || !source.trim()) {
+            showMessage("اكتب اسم السورس والكود أولًا.", true);
+            return;
+        }
+
+        if (title.length > 80) {
+            showMessage("اسم السورس يجب ألا يتجاوز 80 حرفًا.", true);
+            return;
+        }
+
+        if (source.length > 200000) {
+            showMessage("الكود يتجاوز الحد المسموح به.", true);
+            return;
+        }
+
+        setBusy(true);
+        showMessage("جاري حفظ السورس...");
+
+        try {
+            if (editingId) {
+                await api(
+                    `/api/scripts/${encodeURIComponent(editingId)}`,
+                    {
+                        method: "PATCH",
+                        body: JSON.stringify({ title, source })
+                    }
+                );
+            } else {
+                await api("/api/scripts", {
+                    method: "POST",
+                    body: JSON.stringify({ title, source })
+                });
+            }
+
+            resetForm();
+            await loadScripts();
+            showMessage("تم حفظ السورس بنجاح.");
+        } catch (error) {
+            showMessage(error.message || "تعذر حفظ السورس.", true);
+        } finally {
+            setBusy(false);
+        }
+    });
+}
 
 async function startApp() {
-    if (!configured) {
-        showLoggedOut();
-        showMessage(
-            "أضف إعدادات Firebase الصحيحة داخل app.js لتفعيل تسجيل الدخول.",
-            true
-        );
-        loginButton.disabled = true;
-        return;
-    }
-
     try {
         const app = initializeApp(firebaseConfig);
         auth = getAuth(app);
 
         onAuthStateChanged(auth, async user => {
+            const version = ++authCheckVersion;
             currentUser = user;
 
             if (!user) {
@@ -264,9 +358,20 @@ async function startApp() {
 
             try {
                 await api("/api/me");
+
+                if (
+                    version !== authCheckVersion ||
+                    !currentUser ||
+                    currentUser.uid !== user.uid
+                ) {
+                    return;
+                }
+
                 await loadScripts();
             } catch (error) {
-                showMessage(error.message, true);
+                if (version !== authCheckVersion) return;
+
+                showMessage(error.message || "تعذر التحقق من حسابك.", true);
             }
         });
     } catch (error) {
