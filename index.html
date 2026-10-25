@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Lunex Scripts - منصة إدارة وحفظ أكواد Lua">
+  <title>Lunex Scripts</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Lunex Scripts">
+        <span class="brand-mark">L</span>
+        <span>Lunex <span class="brand-light">Scripts</span></span>
+      </a>
+
+      <div class="topbar-actions">
+        <button
+          id="theme-toggle"
+          class="icon-button"
+          type="button"
+          aria-label="تغيير المظهر"
+          title="تغيير المظهر"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20.2 15.4A8.6 8.6 0 0 1 8.6 3.8a8.7 8.7 0 1 0 11.6 11.6Z"/>
+          </svg>
+        </button>
+
+        <button id="login-button" class="button button-primary" type="button">
+          تسجيل الدخول
+        </button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <section class="welcome-section">
+        <p class="eyebrow">LUNEX WORKSPACE</p>
+        <h1>مساحة أكوادك، بطريقتك.</h1>
+        <p class="welcome-description">
+          أنشئ سورسات Lua، ونظّم مشاريعك، وادِر روابطك من مكان واحد.
+        </p>
+
+        <button
+          id="create-script-button"
+          class="button button-primary create-button"
+          type="button"
+        >
+          <span aria-hidden="true">+</span>
+          إنشاء سورس جديد
+        </button>
+      </section>
+
+      <section class="workspace">
+        <div class="section-heading">
+          <div>
+            <h2>سورساتي</h2>
+            <p>أكوادك المحفوظة في مساحة العمل.</p>
+          </div>
+
+          <span id="script-count" class="count-label">0 سورس</span>
+        </div>
+
+        <div id="auth-notice" class="notice">
+          سجّل الدخول لعرض سورساتك وإنشاء سورس جديد.
+        </div>
+
+        <div id="scripts-list" class="scripts-list">
+          <div class="empty-state">
+            <div class="empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="m8 8-4 4 4 4"/>
+                <path d="m16 8 4 4-4 4"/>
+                <path d="m14 5-4 14"/>
+              </svg>
+            </div>
+            <h3>مساحة عملك بانتظارك</h3>
+            <p>سجّل الدخول للبدء بإضافة سورساتك.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="editor-section" class="editor-section" hidden>
+        <div class="editor-heading">
+          <div>
+            <h2 id="editor-heading-title">سورس جديد</h2>
+            <p>اكتب الكود واحفظه في حسابك.</p>
+          </div>
+          <button id="close-editor-button" class="button button-secondary" type="button">
+            إغلاق
+          </button>
+        </div>
+
+        <form id="script-form">
+          <label for="script-title">اسم السورس</label>
+          <input
+            id="script-title"
+            name="title"
+            type="text"
+            maxlength="80"
+            placeholder="مثال: My Lua Script"
+            required
+          >
+
+          <label for="script-slug">اسم الرابط المخصص</label>
+          <div class="slug-input">
+            <span>/</span>
+            <input
+              id="script-slug"
+              name="slug"
+              type="text"
+              maxlength="50"
+              pattern="[A-Za-z0-9_-]+"
+              placeholder="MyScript"
+              required
+            >
+          </div>
+          <p class="field-hint">
+            استخدم الحروف الإنجليزية والأرقام والشرطة فقط.
+          </p>
+
+          <label for="script-code">كود Lua</label>
+          <textarea
+            id="script-code"
+            name="source_code"
+            spellcheck="false"
+            autocapitalize="off"
+            autocomplete="off"
+            placeholder="-- اكتب كود Lua هنا..."
+            required
+          ></textarea>
+
+          <div class="editor-actions">
+            <button class="button button-primary" type="submit">
+              حفظ السورس
+            </button>
+            <button id="copy-code-button" class="button button-secondary" type="button">
+              نسخ الكود
+            </button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Lunex Scripts</span>
+      <span>مساحة خاصة لإدارة أكوادك</span>
+    </footer>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
