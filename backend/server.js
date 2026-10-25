@@ -1,3 +1,4 @@
+
 const express = require("express");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -16,7 +17,8 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "256kb" }));
+// Allow JSON requests containing larger Lua source code.
+app.use(express.json({ limit: "1mb" }));
 
 app.use(
   "/api",
@@ -36,9 +38,17 @@ if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   throw new Error("Missing FIREBASE_SERVICE_ACCOUNT_JSON");
 }
 
-const serviceAccount = JSON.parse(
-  process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-);
+let serviceAccount;
+
+try {
+  serviceAccount = JSON.parse(
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+  );
+} catch {
+  throw new Error(
+    "FIREBASE_SERVICE_ACCOUNT_JSON must contain valid JSON"
+  );
+}
 
 if (!admin.apps.length) {
   admin.initializeApp({
@@ -48,10 +58,18 @@ if (!admin.apps.length) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  max: 5,
+  connectionTimeoutMillis: 10_000,
+  idleTimeoutMillis: 10_000,
+  allowExitOnIdle: true,
   ssl:
     process.env.NODE_ENV === "production"
       ? { rejectUnauthorized: false }
       : false
+});
+
+pool.on("error", error => {
+  console.error("Unexpected PostgreSQL pool error:", error.message);
 });
 
 const adminEmails = new Set(
@@ -76,7 +94,6 @@ async function authenticate(req, res, next) {
     }
 
     const token = header.slice(7);
-
     const decoded = await admin.auth().verifyIdToken(token, true);
 
     req.user = {
@@ -139,25 +156,34 @@ app.get("/api/scripts", authenticate, async (req, res) => {
           [req.user.uid]
         );
 
-    res.json({
+    return res.json({
       scripts: result.rows
     });
   } catch (error) {
     console.error("List scripts failed:", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "تعذر تحميل السورسات."
     });
   }
 });
 
 app.post("/api/scripts", authenticate, async (req, res) => {
-  const title = String(req.body.title || "").trim().slice(0, 80);
-  const source = String(req.body.source || "");
+  const body = req.body || {};
+  const title = String(body.title || "").trim();
+  const source = typeof body.source === "string"
+    ? body.source
+    : "";
 
   if (!title) {
     return res.status(400).json({
       error: "اكتب اسم السورس."
+    });
+  }
+
+  if (title.length > 80) {
+    return res.status(400).json({
+      error: "اسم السورس يجب ألا يتجاوز 80 حرفًا."
     });
   }
 
@@ -173,43 +199,50 @@ app.post("/api/scripts", authenticate, async (req, res) => {
     });
   }
 
-  const client = await pool.connect();
+  let client;
 
   try {
+    client = await pool.connect();
+
     await client.query("BEGIN");
 
     const publicId = createPublicId();
 
-    await client.query(
+    const inserted = await client.query(
       `INSERT INTO scripts (public_id, owner_uid, title, source)
-       VALUES ($1, $2, $3, $4)`,
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
       [publicId, req.user.uid, title, source]
     );
 
     await client.query(
       `INSERT INTO access_events (script_id, actor_uid, event_type)
-       SELECT id, $1, 'created'
-       FROM scripts
-       WHERE public_id = $2`,
-      [req.user.uid, publicId]
+       VALUES ($1, $2, 'created')`,
+      [inserted.rows[0].id, req.user.uid]
     );
 
     await client.query("COMMIT");
 
-    res.status(201).json({
+    return res.status(201).json({
       publicId,
       title
     });
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (client) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        console.error("Rollback failed:", rollbackError.message);
+      }
+    }
 
     console.error("Create script failed:", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "تعذر حفظ السورس."
     });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
@@ -217,7 +250,7 @@ app.get("/api/scripts/:id", authenticate, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, public_id, owner_uid, title, source,
-              created_at, enabled
+              created_at, updated_at, enabled
        FROM scripts
        WHERE public_id = $1`,
       [req.params.id]
@@ -243,32 +276,34 @@ app.get("/api/scripts/:id", authenticate, async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       script
     });
   } catch (error) {
     console.error("Get script failed:", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "تعذر فتح السورس."
     });
   }
 });
 
 app.patch("/api/scripts/:id", authenticate, async (req, res) => {
+  const body = req.body || {};
+
   const title =
-    typeof req.body.title === "string"
-      ? req.body.title.trim().slice(0, 80)
+    typeof body.title === "string"
+      ? body.title.trim()
       : null;
 
   const source =
-    typeof req.body.source === "string"
-      ? req.body.source
+    typeof body.source === "string"
+      ? body.source
       : null;
 
   const enabled =
-    typeof req.body.enabled === "boolean"
-      ? req.body.enabled
+    typeof body.enabled === "boolean"
+      ? body.enabled
       : null;
 
   if (
@@ -281,9 +316,9 @@ app.patch("/api/scripts/:id", authenticate, async (req, res) => {
     });
   }
 
-  if (title !== null && !title) {
+  if (title !== null && (!title || title.length > 80)) {
     return res.status(400).json({
-      error: "اسم السورس لا يمكن أن يكون فارغًا."
+      error: "اسم السورس فارغ أو تجاوز 80 حرفًا."
     });
   }
 
@@ -293,6 +328,13 @@ app.patch("/api/scripts/:id", authenticate, async (req, res) => {
   ) {
     return res.status(400).json({
       error: "السورس فارغ أو تجاوز الحد المسموح."
+    });
+  }
+
+  // Only administrators may change the enabled flag.
+  if (enabled !== null && !req.isAdmin) {
+    return res.status(403).json({
+      error: "تغيير حالة السورس مخصص للمشرف فقط."
     });
   }
 
@@ -347,13 +389,13 @@ app.patch("/api/scripts/:id", authenticate, async (req, res) => {
       values
     );
 
-    res.json({
+    return res.json({
       ok: true
     });
   } catch (error) {
     console.error("Update script failed:", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "تعذر تحديث السورس."
     });
   }
@@ -375,13 +417,13 @@ app.delete("/api/scripts/:id", authenticate, async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       ok: true
     });
   } catch (error) {
     console.error("Delete script failed:", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "تعذر حذف السورس."
     });
   }
@@ -402,19 +444,20 @@ app.get(
          LIMIT 300`
       );
 
-      res.json({
+      return res.json({
         events: result.rows
       });
     } catch (error) {
       console.error("Load events failed:", error.message);
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "تعذر تحميل سجل الإدارة."
       });
     }
   }
 );
 
+// Serve the frontend when running Express outside Vercel too.
 app.use(
   express.static(path.join(__dirname, "../frontend"))
 );
