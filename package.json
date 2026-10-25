@@ -2,21 +2,19 @@
   "name": "lunex-scripts",
   "version": "1.0.0",
   "private": true,
-  "description": "Lunex Scripts - Lua source management platform",
+  "description": "Private Lua snippet hosting with Google sign-in, deployable to Vercel",
   "main": "backend/server.js",
   "scripts": {
-    "start": "node backend/server.js",
-    "dev": "node backend/server.js"
+    "start": "node backend/server.js"
   },
   "engines": {
-    "node": "22.x"
+    "node": ">=20"
   },
   "dependencies": {
-    "express": "^5.1.0",
-    "firebase-admin": "^13.4.0",
-    "firebase": "^12.0.0",
-    "pg": "^8.16.3",
-    "helmet": "^8.1.0",
-    "express-rate-limit": "^8.0.1"
+    "express": "^4.21.2",
+    "firebase-admin": "^13.0.2",
+    "pg": "^8.13.1",
+    "helmet": "^8.0.0",
+    "express-rate-limit": "^7.5.0"
   }
 }
