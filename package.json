@@ -1,0 +1,22 @@
+{
+  "name": "lunex-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lunex Scripts - Lua source management platform",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node backend/server.js"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "firebase-admin": "^13.4.0",
+    "firebase": "^12.0.0",
+    "pg": "^8.16.3",
+    "helmet": "^8.1.0",
+    "express-rate-limit": "^8.0.1"
+  }
+}
