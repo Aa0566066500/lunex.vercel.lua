@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#09090b">
+  <meta name="description" content="Lunex Scripts — منصة إدارة سكربتات Lua">
+  <title>Lunex Scripts</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="background-glow"></div>
+
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Lunex Scripts">
+      <span class="brand-logo">L</span>
+      <span>LUNEX <span class="muted">SCRIPTS</span></span>
+    </a>
+
+    <button id="theme-toggle" class="icon-button" type="button" aria-label="تغيير المظهر">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"/>
+      </svg>
+    </button>
+  </header>
+
+  <main>
+    <section id="auth-section" class="auth-layout">
+      <div class="hero">
+        <div class="status-pill">
+          <span class="status-dot"></span>
+          منصة إدارة السكربتات
+        </div>
+
+        <h1>كل سكربتاتك.<br><span>في مكان واحد.</span></h1>
+
+        <p class="hero-description">
+          أنشئ سكربتات Lua واحفظها ونظّمها بأمان،
+          وارجع إليها من أي جهاز.
+        </p>
+
+        <div class="feature-list">
+          <div class="feature">
+            <span class="feature-icon">
+              <svg viewBox="0 0 24 24"><path d="m8 8-4 4 4 4m8-8 4 4-4 4m-3-10-2 12"/></svg>
+            </span>
+            <div>
+              <strong>مساحة لسكربتاتك</strong>
+              <span>حفظ وتعديل وتنظيم الكود</span>
+            </div>
+          </div>
+
+          <div class="feature">
+            <span class="feature-icon">
+              <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+            </span>
+            <div>
+              <strong>حساب خاص بك</strong>
+              <span>حماية الحساب والتحقق من البريد</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="auth-card">
+        <div class="card-heading">
+          <div class="mini-logo">L</div>
+          <h2 id="auth-title">مرحبًا بعودتك</h2>
+          <p id="auth-subtitle">سجّل الدخول إلى حسابك</p>
+        </div>
+
+        <form id="login-form">
+          <label for="login-email">البريد الإلكتروني</label>
+          <input id="login-email" type="email" autocomplete="email" required placeholder="name@example.com">
+
+          <label for="login-password">كلمة المرور</label>
+          <input id="login-password" type="password" autocomplete="current-password" required placeholder="أدخل كلمة المرور">
+
+          <button class="text-button forgot-button" id="forgot-button" type="button">
+            نسيت كلمة المرور؟
+          </button>
+
+          <button class="primary-button" type="submit">
+            تسجيل الدخول
+            <span aria-hidden="true">←</span>
+          </button>
+        </form>
+
+        <form id="register-form" hidden>
+          <label for="register-username">اسم المستخدم</label>
+          <input id="register-username" maxlength="30" autocomplete="username" required placeholder="اسم المستخدم">
+
+          <label for="register-email">البريد الإلكتروني</label>
+          <input id="register-email" type="email" autocomplete="email" required placeholder="name@example.com">
+
+          <label for="register-password">كلمة المرور</label>
+          <input id="register-password" type="password" autocomplete="new-password" required placeholder="8 أحرف على الأقل">
+
+          <label for="register-confirm">تأكيد كلمة المرور</label>
+          <input id="register-confirm" type="password" autocomplete="new-password" required placeholder="أعد كتابة كلمة المرور">
+
+          <button class="primary-button" type="submit">إنشاء الحساب <span>←</span></button>
+        </form>
+
+        <form id="verify-form" hidden>
+          <p class="form-note">أرسلنا رمز تحقق إلى بريدك الإلكتروني. أدخل الرمز المكوّن من 6 أرقام.</p>
+
+          <label for="verify-email">البريد الإلكتروني</label>
+          <input id="verify-email" type="email" autocomplete="email" required>
+
+          <label for="verify-code">رمز التحقق</label>
+          <input id="verify-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="000000">
+
+          <button class="primary-button" type="submit">تأكيد البريد <span>←</span></button>
+
+          <button class="secondary-button" id="resend-button" type="button" disabled>
+            إعادة إرسال الرمز (30)
+          </button>
+        </form>
+
+        <form id="forgot-form" hidden>
+          <p class="form-note">أدخل بريدك الإلكتروني لإرسال تعليمات استعادة كلمة المرور.</p>
+
+          <label for="forgot-email">البريد الإلكتروني</label>
+          <input id="forgot-email" type="email" autocomplete="email" required placeholder="name@example.com">
+
+          <button class="primary-button" type="submit">إرسال تعليمات الاستعادة</button>
+        </form>
+
+        <form id="reset-form" hidden>
+          <label for="reset-password">كلمة المرور الجديدة</label>
+          <input id="reset-password" type="password" autocomplete="new-password" required>
+
+          <label for="reset-confirm">تأكيد كلمة المرور</label>
+          <input id="reset-confirm" type="password" autocomplete="new-password" required>
+
+          <button class="primary-button" type="submit">تغيير كلمة المرور</button>
+        </form>
+
+        <div id="auth-message" class="message" role="status" aria-live="polite"></div>
+
+        <div class="divider"><span>أو</span></div>
+
+        <p class="switch-auth">
+          <span id="switch-label">ليس لديك حساب؟</span>
+          <button id="switch-button" class="text-button" type="button">إنشاء حساب</button>
+        </p>
+
+        <p class="legal-note">باستخدامك المنصة، أنت توافق على استخدامها بمسؤولية.</p>
+      </div>
+    </section>
+
+    <section id="dashboard-section" hidden>
+      <div class="dashboard-heading">
+        <div>
+          <p class="eyebrow">WORKSPACE / LUNEX</p>
+          <h1>مساحة <span>السكربتات</span></h1>
+          <p class="hero-description">أدر أكواد Lua من مكان واحد.</p>
+        </div>
+
+        <button id="logout-button" class="secondary-button" type="button">تسجيل الخروج</button>
+      </div>
+
+      <div class="workspace-card">
+        <div class="workspace-toolbar">
+          <div>
+            <h2>سكربتاتي</h2>
+            <p id="user-label">حسابك</p>
+          </div>
+          <button id="new-script-button" class="primary-button compact" type="button">+ سكربت جديد</button>
+        </div>
+
+        <form id="script-form" hidden>
+          <label for="script-title">اسم السكربت</label>
+          <input id="script-title" maxlength="80" required placeholder="اسم السكربت">
+
+          <label for="script-source">الكود</label>
+          <textarea id="script-source" maxlength="200000" rows="12" required spellcheck="false" placeholder="الصق كود Lua هنا..."></textarea>
+
+          <div class="button-row">
+            <button class="primary-button compact" type="submit">حفظ السكربت</button>
+            <button id="cancel-script-button" class="secondary-button" type="button">إلغاء</button>
+          </div>
+        </form>
+
+        <div id="dashboard-message" class="message" role="status" aria-live="polite"></div>
+        <div id="scripts-list" class="scripts-grid"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>© <span id="current-year"></span> LUNEX SCRIPTS</span>
+    <span>BUILT FOR YOUR WORKFLOW</span>
+  </footer>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
